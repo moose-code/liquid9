@@ -21,6 +21,7 @@ contract Liquid {
         uint256 auctionLength;
         uint256 startTime;
         uint256 totalRaised;
+        uint256 totalLPTokensCreated;
         address protocolTreasuryAddress;
         address protocolToken;
         address otherToken;
@@ -171,43 +172,57 @@ contract Liquid {
             return; // auction didn't pass people should withdraw.
         }
 
-        // Create and lock LP for 3 months.
+        // Need to ensure permissonless addition of this liquidity cannot be exploited
+        _addTheLiquidity(_auctionIndex);
+
+        // perform other work!
+    }
+
+    function _addTheLiquidity(uint256 _auctionIndex) internal {
         Auction memory auction = auctions[_auctionIndex];
 
+        uint256 balanceBefore = IUniswapV2Pair(auction.pairAddress).balanceOf(
+            address(this)
+        );
+        // check what is token0 and make sure we get reserve correct.
         address token0 = IUniswapV2Pair(auction.pairAddress).token0();
-
         (uint112 reserve0, uint112 reserve1, ) = IUniswapV2Pair(
             auction.pairAddress
         ).getReserves();
 
         // It is not safe to look up the reserve ratio from within a transaction and rely on it as a price belief,
         // as this ratio can be cheaply manipulated to your detriment.
+        // don't want to get rugged here. We need slippage tolerance and or a price estimate.zs
         // https://docs.uniswap.org/protocol/V2/guides/smart-contract-integration/providing-liquidity
         (uint256 reserveProtocolToken, uint256 reserveOtherToken) = (token0 ==
             auction.protocolToken)
             ? (uint256(reserve0), uint256(reserve1))
             : (uint256(reserve1), uint256(reserve0));
 
-        // don't want to get rugged here. We need slippage tolerance and or a price estimate.
+        // calculate exact ratio to put it in at.
+        uint256 amountOfProtocolTokenToPutIn = (reserveOtherToken *
+            auction.totalRaised) / reserveProtocolToken;
 
         // give router the necessary allowance.
-
-        // calculate exact ratio to put it in at.
         IUniswapV2Router02(auction.routerAddress).addLiquidity(
             auction.protocolToken,
             auction.otherToken,
-            123, // amountADesired
-            123,
-            0, // amountAmin. Need to make this very reasonable otherwise get rekt
-            0, // amountBmin
+            amountOfProtocolTokenToPutIn, // amountADesired
+            auction.totalRaised,
+            (amountOfProtocolTokenToPutIn * 995) / 1000, // 50 bips tolerance
+            (auction.totalRaised * 995) / 1000, // 50 bips tolerance
             address(this),
             block.timestamp // must execute atomically obvs
         );
 
-        // perform other work!
-    }
+        uint256 balanceAfter = IUniswapV2Pair(auction.pairAddress).balanceOf(
+            address(this)
+        );
 
-    function addTheLiquidity(uint256 _auctionIndex) internal {}
+        auctions[_auctionIndex].totalLPTokensCreated =
+            balanceAfter -
+            balanceBefore;
+    }
 
     /*╔═════════════════════════════╗
       ║    Failed event withdrawls  ║
