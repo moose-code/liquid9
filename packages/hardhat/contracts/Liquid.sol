@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol";
 import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
+import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Factory.sol";
 
 contract Liquid {
     address liquid11;
@@ -24,6 +25,7 @@ contract Liquid {
         address protocolToken;
         address otherToken;
         address routerAddress;
+        address pairAddress;
         bool auctionDidNotPass;
         bool auctionFinalized;
     }
@@ -62,7 +64,8 @@ contract Liquid {
         uint256 _startTime,
         address _protocolToken,
         address _otherToken,
-        address _routerAddress
+        address _routerAddress,
+        address _factoryAddress
     ) external {
         auctionIndex++;
 
@@ -70,6 +73,15 @@ contract Liquid {
         require(
             _totalTokenAmount >= 2 * _auctionAmount,
             "insufcient auction funds"
+        );
+
+        auctions[auctionIndex].pairAddress = IUniswapV2Factory(_factoryAddress)
+            .getPair(_protocolToken, _otherToken);
+
+        // check the pair exists
+        require(
+            auctions[auctionIndex].pairAddress != address(0),
+            "pair must exist"
         );
 
         // give us the juice
@@ -162,15 +174,23 @@ contract Liquid {
         // Create and lock LP for 3 months.
         Auction memory auction = auctions[_auctionIndex];
 
-        // give router the necessary allowance.
-        (
-            uint112 reserve0,
-            uint112 reserve1,
-            uint32 blockTimestampLast
-        ) = IUniswapV2Pair(auction.routerAddress).getReserves();
+        address token0 = IUniswapV2Pair(auction.pairAddress).token0();
 
-        // check if the route and pair addressa are different and how different.
-        // don't want to get rugged here.
+        (uint112 reserve0, uint112 reserve1, ) = IUniswapV2Pair(
+            auction.pairAddress
+        ).getReserves();
+
+        // It is not safe to look up the reserve ratio from within a transaction and rely on it as a price belief,
+        // as this ratio can be cheaply manipulated to your detriment.
+        // https://docs.uniswap.org/protocol/V2/guides/smart-contract-integration/providing-liquidity
+        (uint256 reserveProtocolToken, uint256 reserveOtherToken) = (token0 ==
+            auction.protocolToken)
+            ? (uint256(reserve0), uint256(reserve1))
+            : (uint256(reserve1), uint256(reserve0));
+
+        // don't want to get rugged here. We need slippage tolerance and or a price estimate.
+
+        // give router the necessary allowance.
 
         // calculate exact ratio to put it in at.
         IUniswapV2Router02(auction.routerAddress).addLiquidity(
@@ -178,7 +198,7 @@ contract Liquid {
             auction.otherToken,
             123, // amountADesired
             123,
-            0, // amountAmin
+            0, // amountAmin. Need to make this very reasonable otherwise get rekt
             0, // amountBmin
             address(this),
             block.timestamp // must execute atomically obvs
