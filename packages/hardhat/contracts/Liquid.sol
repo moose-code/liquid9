@@ -184,16 +184,17 @@ contract Liquid {
         uint256 balanceBefore = IUniswapV2Pair(auction.pairAddress).balanceOf(
             address(this)
         );
-        // check what is token0 and make sure we get reserve correct.
-        address token0 = IUniswapV2Pair(auction.pairAddress).token0();
-        (uint112 reserve0, uint112 reserve1, ) = IUniswapV2Pair(
-            auction.pairAddress
-        ).getReserves();
 
         // It is not safe to look up the reserve ratio from within a transaction and rely on it as a price belief,
         // as this ratio can be cheaply manipulated to your detriment.
         // don't want to get rugged here. We need slippage tolerance and or a price estimate.zs
         // https://docs.uniswap.org/protocol/V2/guides/smart-contract-integration/providing-liquidity
+
+        address token0 = IUniswapV2Pair(auction.pairAddress).token0();
+        (uint112 reserve0, uint112 reserve1, ) = IUniswapV2Pair(
+            auction.pairAddress
+        ).getReserves();
+
         (uint256 reserveProtocolToken, uint256 reserveOtherToken) = (token0 ==
             auction.protocolToken)
             ? (uint256(reserve0), uint256(reserve1))
@@ -204,13 +205,22 @@ contract Liquid {
             auction.totalRaised) / reserveProtocolToken;
 
         // give router the necessary allowance.
+
+        IERC20(auction.protocolToken).approve(
+            auction.routerAddress,
+            amountOfProtocolTokenToPutIn
+        );
+        IERC20(auction.otherToken).approve(
+            auction.routerAddress,
+            auction.totalRaised
+        );
         IUniswapV2Router02(auction.routerAddress).addLiquidity(
             auction.protocolToken,
             auction.otherToken,
             amountOfProtocolTokenToPutIn, // amountADesired
             auction.totalRaised,
-            (amountOfProtocolTokenToPutIn * 995) / 1000, // 50 bips tolerance
-            (auction.totalRaised * 995) / 1000, // 50 bips tolerance
+            (amountOfProtocolTokenToPutIn * 997) / 1000, // 30 bips tolerance
+            (auction.totalRaised * 997) / 1000, // 30 bips tolerance
             address(this),
             block.timestamp // must execute atomically obvs
         );
