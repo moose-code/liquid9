@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol";
+import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
 
 contract Liquid {
     address liquid11;
@@ -49,6 +50,10 @@ contract Liquid {
         _;
     }
 
+    /*╔═════════════════════════════╗
+      ║  Create liquidity event     ║
+      ╚═════════════════════════════╝*/
+
     function createAuction(
         uint256 _totalTokenAmount,
         uint256 _auctionAmount,
@@ -88,6 +93,10 @@ contract Liquid {
         auctions[auctionIndex].startTime = _startTime;
     }
 
+    /*╔═════════════════════════════╗
+      ║    User participate         ║
+      ╚═════════════════════════════╝*/
+
     // ape into the sepcific liquidity event
     function ape(uint256 _auctionIndex, uint256 _amountToApe)
         external
@@ -95,7 +104,7 @@ contract Liquid {
     {
         require(_amountToApe > 0, "ape harder");
         // enforce not too much ape edge case after hack.
-        IERC20(auctions[auctionIndex].otherToken).transfer(
+        IERC20(auctions[_auctionIndex].otherToken).transfer(
             address(this),
             _amountToApe
         );
@@ -116,13 +125,17 @@ contract Liquid {
         );
 
         userContributions[msg.sender][_auctionIndex].amount -= _amountToApeOut;
-        auctions[auctionIndex].totalRaised -= _amountToApeOut;
+        auctions[_auctionIndex].totalRaised -= _amountToApeOut;
 
-        IERC20(auctions[auctionIndex].otherToken).transfer(
+        IERC20(auctions[_auctionIndex].otherToken).transfer(
             msg.sender,
             _amountToApeOut
         );
     }
+
+    /*╔═════════════════════════════╗
+      ║    Finalize the event       ║
+      ╚═════════════════════════════╝*/
 
     function finalizeAuction(uint256 _auctionIndex) external {
         require(
@@ -146,22 +159,39 @@ contract Liquid {
             return; // auction didn't pass people should withdraw.
         }
 
-        Auction memory auction = auctions[auctionIndex];
+        // Create and lock LP for 3 months.
+        Auction memory auction = auctions[_auctionIndex];
 
         // give router the necessary allowance.
+        (
+            uint112 reserve0,
+            uint112 reserve1,
+            uint32 blockTimestampLast
+        ) = IUniswapV2Pair(auction.routerAddress).getReserves();
+
+        // check if the route and pair addressa are different and how different.
+        // don't want to get rugged here.
+
+        // calculate exact ratio to put it in at.
         IUniswapV2Router02(auction.routerAddress).addLiquidity(
             auction.protocolToken,
             auction.otherToken,
             123, // amountADesired
             123,
-            100, // amountAmin
-            100,
+            0, // amountAmin
+            0, // amountBmin
             address(this),
-            123
+            block.timestamp // must execute atomically obvs
         );
 
-        // perform work!
+        // perform other work!
     }
+
+    function addTheLiquidity(uint256 _auctionIndex) internal {}
+
+    /*╔═════════════════════════════╗
+      ║    Failed event withdrawls  ║
+      ╚═════════════════════════════╝*/
 
     function withdrawFailedEvent(uint256 _auctionIndex) external {
         require(
@@ -171,19 +201,19 @@ contract Liquid {
         uint256 amount = userContributions[msg.sender][_auctionIndex].amount;
         userContributions[msg.sender][_auctionIndex].amount = 0;
 
-        IERC20(auctions[auctionIndex].otherToken).transfer(msg.sender, amount);
+        IERC20(auctions[_auctionIndex].otherToken).transfer(msg.sender, amount);
     }
 
     function withdrawFailedEventProtocol(uint256 _auctionIndex) external {
         require(
-            auctions[auctionIndex].auctionDidNotPass,
+            auctions[_auctionIndex].auctionDidNotPass,
             "can only exit in failed event"
         );
-        uint256 amount = auctions[auctionIndex].totalTokenPool;
-        auctions[auctionIndex].totalTokenPool = 0;
+        uint256 amount = auctions[_auctionIndex].totalTokenPool;
+        auctions[_auctionIndex].totalTokenPool = 0;
 
-        IERC20(auctions[auctionIndex].protocolToken).transfer(
-            auctions[auctionIndex].protocolTreasuryAddress,
+        IERC20(auctions[_auctionIndex].protocolToken).transfer(
+            auctions[_auctionIndex].protocolTreasuryAddress,
             amount
         );
     }
