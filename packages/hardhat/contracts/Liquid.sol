@@ -172,7 +172,7 @@ contract Liquid {
         );
         require(
             !auctions[_auctionIndex].auctionFinalized,
-            "auction not finalized"
+            "auction already finalized"
         );
 
         auctions[_auctionIndex].auctionFinalized = true;
@@ -251,9 +251,51 @@ contract Liquid {
       ║    success redeem events    ║
       ╚═════════════════════════════╝*/
 
+    function userRedeemTokens(uint256 _auctionIndex) external {
+        require(
+            auctions[_auctionIndex].auctionFinalized,
+            "auction not finalized"
+        );
+        //only once auction is over
+        UserContribution storage user = userContributions[msg.sender][
+            _auctionIndex
+        ];
+
+        uint256 baseAmountForUser = (auctions[_auctionIndex].auctionAmount *
+            user.amount) / auctions[_auctionIndex].totalRaised;
+
+        if (user.lastRedeemTimestamp == 0) {
+            user.lastRedeemTimestamp = block.timestamp;
+        }
+
+        uint256 vestingPeriod = (user.diamondHand) ? 90 days : 180 days;
+        uint256 vestEndTime = auctions[_auctionIndex].startTime +
+            auctions[_auctionIndex].auctionLength +
+            vestingPeriod;
+
+        uint256 vestedTill = (block.timestamp > vestEndTime)
+            ? vestEndTime
+            : block.timestamp;
+
+        // safe math will revert if they try redeem again past their vest period
+        uint256 vestedAmount = (baseAmountForUser *
+            (vestedTill - user.lastRedeemTimestamp)) / vestingPeriod;
+
+        user.lastRedeemTimestamp = block.timestamp;
+
+        IERC20(auctions[_auctionIndex].protocolToken).transfer(
+            msg.sender,
+            vestedAmount
+        );
+    }
+
     function protocolRedeemLPtokens(uint256 _auctionIndex) external {
+        require(
+            auctions[_auctionIndex].auctionFinalized,
+            "auction not finalized"
+        );
         uint256 amount = auctions[_auctionIndex].totalLPTokensCreated;
-        require(amount > 0, "Liquidity not created");
+
         auctions[_auctionIndex].totalLPTokensCreated = 0;
         IUniswapV2Pair(auctions[_auctionIndex].pairAddress).transferFrom(
             address(this),
