@@ -9,9 +9,13 @@ import "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol";
 import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Pair.sol";
 import "@uniswap/v2-core/contracts/interfaces/IUniswapV2Factory.sol";
 
+import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+
 contract Liquid {
     address liquid11;
     uint256 auctionIndex;
+
+    AggregatorV3Interface internal priceFeed;
 
     mapping(uint256 => Auction) public auctions;
     struct Auction {
@@ -203,30 +207,48 @@ contract Liquid {
         // don't want to get rugged here. We need slippage tolerance and or a price estimate.zs
         // https://docs.uniswap.org/protocol/V2/guides/smart-contract-integration/providing-liquidity
 
-        address token0 = IUniswapV2Pair(auction.pairAddress).token0();
+        // address token0 = IUniswapV2Pair(auction.pairAddress).token0();
         (uint112 reserve0, uint112 reserve1, ) = IUniswapV2Pair(
             auction.pairAddress
         ).getReserves();
 
-        (uint256 reserveProtocolToken, uint256 reserveOtherToken) = (token0 ==
-            auction.protocolToken)
-            ? (uint256(reserve0), uint256(reserve1))
-            : (uint256(reserve1), uint256(reserve0));
+        (
+            uint256 reserveProtocolToken,
+            uint256 reserveOtherToken
+        ) = (IUniswapV2Pair(auction.pairAddress).token0() ==
+                auction.protocolToken)
+                ? (uint256(reserve0), uint256(reserve1))
+                : (uint256(reserve1), uint256(reserve0));
 
         // calculate exact ratio to put it in at.
         uint256 amountOfProtocolTokenToPutIn = (reserveOtherToken *
             auction.totalRaised) / reserveProtocolToken;
 
-        // give router the necessary allowance.
+        // dyanimcally get address in future
+        uint256 fairPrice = uint256(getLatestPrice(auction.pairAddress));
+        // uint256 ammImpliedPrice = (reserveOtherToken * 1e18) /
+        // reserveProtocolToken;
 
-        IERC20(auction.protocolToken).approve(
-            auction.routerAddress,
-            amountOfProtocolTokenToPutIn
+        //check we weren't sandwidched using chainlink
+        require(
+            (fairPrice * 997) / 1000 <
+                (reserveOtherToken * 1e18) / reserveProtocolToken
         );
-        IERC20(auction.otherToken).approve(
-            auction.routerAddress,
-            auction.totalRaised
+        require(
+            (fairPrice * 1003) / 1000 >
+                (reserveOtherToken * 1e18) / reserveProtocolToken
         );
+
+        // give router the necessary allowance
+        // maximal approve rather in contructor
+        // IERC20(auction.protocolToken).approve(
+        //     auction.routerAddress,
+        //     amountOfProtocolTokenToPutIn
+        // );
+        // IERC20(auction.otherToken).approve(
+        //     auction.routerAddress,
+        //     auction.totalRaised
+        // );
         IUniswapV2Router02(auction.routerAddress).addLiquidity(
             auction.protocolToken,
             auction.otherToken,
@@ -238,13 +260,21 @@ contract Liquid {
             block.timestamp // must execute atomically obvs
         );
 
-        uint256 balanceAfter = IUniswapV2Pair(auction.pairAddress).balanceOf(
-            address(this)
-        );
-
         auctions[_auctionIndex].totalLPTokensCreated =
-            balanceAfter -
+            IUniswapV2Pair(auction.pairAddress).balanceOf(address(this)) -
             balanceBefore;
+    }
+
+    function getLatestPrice(address _address) public view returns (int256) {
+        (
+            ,
+            /*uint80 roundID*/
+            int256 price, /*uint startedAt*/ /*uint timeStamp*/ /*uint80 answeredInRound*/
+            ,
+            ,
+
+        ) = AggregatorV3Interface(_address).latestRoundData();
+        return price;
     }
 
     /*╔═════════════════════════════╗
@@ -268,6 +298,7 @@ contract Liquid {
             user.lastRedeemTimestamp = block.timestamp;
         }
 
+        // todo allocate bonus liquidity
         uint256 vestingPeriod = (user.diamondHand) ? 90 days : 180 days;
         uint256 vestEndTime = auctions[_auctionIndex].startTime +
             auctions[_auctionIndex].auctionLength +
