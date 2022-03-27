@@ -36,6 +36,8 @@ contract Liquid {
 
     struct UserContribution {
         uint256 amount;
+        uint256 lastRedeemTimestamp;
+        bool diamondHand;
     }
 
     constructor() {
@@ -111,11 +113,13 @@ contract Liquid {
       ╚═════════════════════════════╝*/
 
     // ape into the sepcific liquidity event
-    function ape(uint256 _auctionIndex, uint256 _amountToApe)
-        external
-        auctionOpen(_auctionIndex)
-    {
+    function ape(
+        uint256 _auctionIndex,
+        uint256 _amountToApe,
+        bool _diamondHand
+    ) external auctionOpen(_auctionIndex) {
         require(_amountToApe > 0, "ape harder");
+
         // enforce not too much ape edge case after hack.
         IERC20(auctions[_auctionIndex].otherToken).transfer(
             address(this),
@@ -123,6 +127,7 @@ contract Liquid {
         );
 
         userContributions[msg.sender][_auctionIndex].amount += _amountToApe;
+        userContributions[msg.sender][_auctionIndex].diamondHand = _diamondHand; // set this always
         auctions[auctionIndex].totalRaised += _amountToApe;
     }
 
@@ -135,6 +140,14 @@ contract Liquid {
             _amountToApeOut <=
                 userContributions[msg.sender][_auctionIndex].amount,
             "naughty ape"
+        );
+
+        // cannot withdraw in last day. Make this neater.
+        require(
+            block.timestamp + 1 days <
+                auctions[_auctionIndex].startTime +
+                    auctions[_auctionIndex].auctionLength,
+            "Cannot withdraw in last day"
         );
 
         userContributions[msg.sender][_auctionIndex].amount -= _amountToApeOut;
@@ -232,6 +245,21 @@ contract Liquid {
         auctions[_auctionIndex].totalLPTokensCreated =
             balanceAfter -
             balanceBefore;
+    }
+
+    /*╔═════════════════════════════╗
+      ║    success redeem events    ║
+      ╚═════════════════════════════╝*/
+
+    function protocolRedeemLPtokens(uint256 _auctionIndex) external {
+        uint256 amount = auctions[_auctionIndex].totalLPTokensCreated;
+        require(amount > 0, "Liquidity not created");
+        auctions[_auctionIndex].totalLPTokensCreated = 0;
+        IUniswapV2Pair(auctions[_auctionIndex].pairAddress).transferFrom(
+            address(this),
+            auctions[_auctionIndex].protocolTreasuryAddress,
+            amount
+        );
     }
 
     /*╔═════════════════════════════╗
